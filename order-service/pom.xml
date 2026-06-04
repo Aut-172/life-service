@@ -97,10 +97,6 @@
             <artifactId>common</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>com.demo</groupId>
-            <artifactId>parking-api</artifactId>
-        </dependency>
         <!-- 测试 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

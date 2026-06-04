@@ -8,10 +8,10 @@
         <version>0.0.1-SNAPSHOT</version>
     </parent>
     <groupId>com.demo</groupId>
-    <artifactId>order-service</artifactId>
+    <artifactId>evaluation-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>order-service</name>
-    <description>order-service</description>
+    <name>evaluation-service</name>
+    <description>evaluation-service</description>
     <url/>
     <licenses>
         <license/>
@@ -97,10 +97,6 @@
             <artifactId>common</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>com.demo</groupId>
-            <artifactId>parking-api</artifactId>
-        </dependency>
         <!-- 测试 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
