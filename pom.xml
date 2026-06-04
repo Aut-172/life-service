@@ -9,21 +9,26 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.demo</groupId>
-    <artifactId>parking-microservices</artifactId>
+    <artifactId>life-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>parking-microservices</name>
+    <name>life-service</name>
     <packaging>pom</packaging>
     <modules>
         <module>common</module>
         <module>auth-service</module>
         <module>user-service</module>
         <module>order-service</module>
-        <module>parking-service</module>
+        <module>cart-service</module>
+        <module>evaluation-service</module>
+        <module>merchant-service</module>
+        <module>product-service</module>
+        <module>rider-service</module>
+        <module>search-service</module>
+        <module>wallet-service</module>
         <module>gateway</module>
         <module>user-api</module>
-        <module>parking-api</module>
     </modules>
-    <description>parking-microservices</description>
+    <description>life-service</description>
     <url/>
     <licenses>
         <license/>
