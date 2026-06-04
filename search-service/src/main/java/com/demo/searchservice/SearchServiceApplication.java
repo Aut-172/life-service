@@ -1,11 +1,11 @@
-package com.demo.riderservice;
+package com.demo.searchservice;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class RiderServiceApplication {
+public class SearchServiceApplication {
     public static void main(String[] args) {
-        SpringApplication.run(RiderServiceApplication.class, args);
+        SpringApplication.run(SearchServiceApplication.class, args);
     }
 }
