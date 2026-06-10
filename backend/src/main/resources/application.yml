@@ -7,9 +7,9 @@ spring:
 
   # 数据源配置
   datasource:
-    url: jdbc:mysql://localhost:3306/life_assistant?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true
-    username: root
-    password: 3.7182818280
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/life_assistant?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&allowMultiQueries=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:3.7182818280}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   # SQL 初始化配置（首次部署时改为 always 执行一次，之后改为 never 防止数据丢失）

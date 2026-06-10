@@ -4672,7 +4672,10 @@ function bindEvents() {
             showToast('只有配送中的订单才能完成');
             return;
           }
-          Object.assign(localOrder, normalizeOrder(updated));
+          localOrder.status = updated.status || localOrder.status;
+          localOrder.eta = updated.eta || localOrder.eta;
+          localOrder.riderId = state.auth.riderId;
+          localOrder.riderName = state.profile.nickname || localOrder.riderName;
         }
         await refreshRoleData();
         saveState();

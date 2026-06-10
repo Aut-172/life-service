@@ -1,6 +1,7 @@
 package com.example.demo.auth.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.example.demo.common.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -16,6 +17,7 @@ import java.math.BigDecimal;
 public class Merchant extends BaseEntity {
 
     private String username;
+    @JsonIgnore
     private String password;
     private String name;
     private String phone;

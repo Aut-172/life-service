@@ -10,6 +10,7 @@ import com.example.demo.order.entity.OrderItem;
 import com.example.demo.order.entity.Orders;
 import com.example.demo.order.mapper.OrderItemMapper;
 import com.example.demo.order.mapper.OrdersMapper;
+import com.example.demo.rider.dto.RiderProfileUpdateRequest;
 import com.example.demo.rider.dto.RiderTaskUpdateRequest;
 import com.example.demo.rider.dto.RiderTaskVO;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,35 @@ public class RiderService {
     private final OrderItemMapper orderItemMapper;
     private final MerchantMapper merchantMapper;
     private final RiderMapper riderMapper;
+
+    public Rider updateProfile(Long riderId, RiderProfileUpdateRequest request) {
+        Rider rider = riderMapper.selectById(riderId);
+        if (rider == null) {
+            throw BusinessException.notFound("骑手不存在");
+        }
+
+        if (request.getNickname() != null && !request.getNickname().isBlank()) {
+            rider.setName(request.getNickname().trim());
+        }
+        if (request.getPhone() != null && !request.getPhone().isBlank()) {
+            Rider duplicate = riderMapper.selectOne(
+                    new LambdaQueryWrapper<Rider>()
+                            .eq(Rider::getPhone, request.getPhone().trim())
+                            .ne(Rider::getId, riderId)
+                            .last("limit 1")
+            );
+            if (duplicate != null) {
+                throw BusinessException.badRequest("手机号已被其他骑手使用");
+            }
+            rider.setPhone(request.getPhone().trim());
+        }
+        if (request.getServiceArea() != null) {
+            rider.setServiceArea(request.getServiceArea().trim());
+        }
+
+        riderMapper.updateById(rider);
+        return riderMapper.selectById(riderId);
+    }
 
     /**
      * 获取骑手任务列表

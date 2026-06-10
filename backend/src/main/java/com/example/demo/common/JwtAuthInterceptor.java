@@ -6,8 +6,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * JWT 认证拦截器
- * 从请求头中提取 Token 并解析用户信息，存入请求属性
+ * JWT authentication interceptor with basic role-based path protection.
  */
 @Component
 public class JwtAuthInterceptor implements HandlerInterceptor {
@@ -19,8 +18,7 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
     }
 
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // 放行 OPTIONS 请求
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;
         }
@@ -37,12 +35,11 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
 
         Long userId = jwtUtil.getUserId(token);
         String role = jwtUtil.getRole(token);
+        enforceRoleAccess(request.getRequestURI(), role);
 
-        // 将用户信息存入请求属性
         request.setAttribute("userId", userId);
         request.setAttribute("role", role);
 
-        // 根据角色设置对应的 ID 属性，方便控制器使用
         if ("merchant".equals(role)) {
             request.setAttribute("merchantId", userId);
         } else if ("rider".equals(role)) {
@@ -52,5 +49,28 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
         }
 
         return true;
+    }
+
+    private void enforceRoleAccess(String requestUri, String role) {
+        if (requestUri.startsWith("/api/admin/") && !"admin".equals(role)) {
+            throw BusinessException.forbidden("无权访问管理员接口");
+        }
+        if (requestUri.startsWith("/api/merchant/") && !"merchant".equals(role)) {
+            throw BusinessException.forbidden("无权访问商家接口");
+        }
+        if (requestUri.startsWith("/api/rider/") && !"rider".equals(role)) {
+            throw BusinessException.forbidden("无权访问骑手接口");
+        }
+        if (requestUri.startsWith("/api/user/")
+                || requestUri.equals("/api/checkout")
+                || requestUri.equals("/api/orders")
+                || requestUri.startsWith("/api/orders/")
+                || requestUri.equals("/api/coupons")
+                || requestUri.startsWith("/api/coupons/")
+                || requestUri.startsWith("/api/payments/")) {
+            if (!"consumer".equals(role)) {
+                throw BusinessException.forbidden("无权访问用户接口");
+            }
+        }
     }
 }

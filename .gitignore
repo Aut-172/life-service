@@ -3,6 +3,8 @@ dist/
 .gradle/
 build/
 out/
+*.out
+*.err
 .idea/
 *.iml
 *.log

@@ -18,8 +18,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 支付服务
- * 模拟支付宝/微信支付流程
+ * Simulated payment service with user ownership checks.
  */
 @Service
 @RequiredArgsConstructor
@@ -30,17 +29,8 @@ public class PaymentService {
 
     private final Snowflake snowflake = IdUtil.getSnowflake(1, 2);
 
-    /**
-     * 模拟支付
-     *
-     * @param userId    用户ID
-     * @param orderId   订单ID
-     * @param payMethod 支付方式 (ALIPAY/WECHAT)
-     * @return 支付记录
-     */
     @Transactional
     public PaymentVO pay(Long userId, Long orderId, String payMethod) {
-        // 校验订单
         Orders order = ordersMapper.selectOne(
                 new LambdaQueryWrapper<Orders>()
                         .eq(Orders::getId, orderId)
@@ -53,20 +43,15 @@ public class PaymentService {
             throw BusinessException.badRequest("当前订单状态不允许支付");
         }
 
-        // 生成支付流水号
-        String transactionId = "TXN" + snowflake.nextId();
-
-        // 创建支付记录
         Payment payment = new Payment();
         payment.setOrderId(orderId);
         payment.setAmount(order.getActualAmount());
         payment.setPayMethod(payMethod != null ? payMethod : "ALIPAY");
-        payment.setTransactionId(transactionId);
-        payment.setStatus("SUCCESS"); // 模拟支付成功
+        payment.setTransactionId("TXN" + snowflake.nextId());
+        payment.setStatus("SUCCESS");
         payment.setPayTime(LocalDateTime.now());
         paymentMapper.insert(payment);
 
-        // 更新订单状态
         order.setStatus("pending_accept");
         order.setPaidAt(LocalDateTime.now());
         ordersMapper.updateById(order);
@@ -74,26 +59,40 @@ public class PaymentService {
         return toPaymentVO(payment);
     }
 
-    /**
-     * 查询订单的支付记录
-     */
-    public List<PaymentVO> getPaymentsByOrderId(Long orderId) {
-        List<Payment> payments = paymentMapper.selectList(
-                new LambdaQueryWrapper<Payment>()
-                        .eq(Payment::getOrderId, orderId)
-                        .orderByDesc(Payment::getCreateTime)
+    public List<PaymentVO> getPaymentsByOrderId(Long userId, Long orderId) {
+        Orders order = ordersMapper.selectOne(
+                new LambdaQueryWrapper<Orders>()
+                        .eq(Orders::getId, orderId)
+                        .eq(Orders::getUserId, userId)
         );
-        return payments.stream().map(this::toPaymentVO).collect(Collectors.toList());
+        if (order == null) {
+            throw BusinessException.notFound("订单不存在");
+        }
+
+        return paymentMapper.selectList(
+                        new LambdaQueryWrapper<Payment>()
+                                .eq(Payment::getOrderId, orderId)
+                                .orderByDesc(Payment::getCreateTime)
+                ).stream()
+                .map(this::toPaymentVO)
+                .collect(Collectors.toList());
     }
 
-    /**
-     * 查询单条支付记录
-     */
-    public PaymentVO getPaymentById(Long paymentId) {
+    public PaymentVO getPaymentById(Long userId, Long paymentId) {
         Payment payment = paymentMapper.selectById(paymentId);
         if (payment == null) {
             throw BusinessException.notFound("支付记录不存在");
         }
+
+        Orders order = ordersMapper.selectOne(
+                new LambdaQueryWrapper<Orders>()
+                        .eq(Orders::getId, payment.getOrderId())
+                        .eq(Orders::getUserId, userId)
+        );
+        if (order == null) {
+            throw BusinessException.notFound("支付记录不存在");
+        }
+
         return toPaymentVO(payment);
     }
 

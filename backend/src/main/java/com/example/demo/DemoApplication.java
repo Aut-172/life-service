@@ -1,11 +1,13 @@
 package com.example.demo;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.demo.auth.entity.Admin;
 import com.example.demo.auth.mapper.AdminMapper;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -23,10 +25,11 @@ public class DemoApplication {
     }
 
     @Bean
+    @ConditionalOnProperty(name = "app.bootstrap-admin.enabled", havingValue = "true", matchIfMissing = true)
     public CommandLineRunner initAdminAccount(AdminMapper adminMapper) {
         return args -> {
-            // 检查 gl1 管理员账号是否已存在
-            Admin existing = adminMapper.selectById(2L);
+            Admin existing = adminMapper.selectOne(new LambdaQueryWrapper<Admin>()
+                    .eq(Admin::getUsername, "gl1"));
             if (existing == null) {
                 Admin gl1 = new Admin();
                 gl1.setId(2L);

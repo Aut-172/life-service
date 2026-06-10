@@ -14,12 +14,20 @@ import com.example.demo.merchant.entity.SpecGroup;
 import com.example.demo.merchant.service.MerchantService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
 /**
- * 商家服务控制器
+ * Merchant-facing and public merchant APIs.
  */
 @RestController
 @RequestMapping("/api")
@@ -28,11 +36,6 @@ public class MerchantController {
 
     private final MerchantService merchantService;
 
-    // ==================== 公开接口（无需登录） ====================
-
-    /**
-     * 获取商家列表
-     */
     @GetMapping("/merchants")
     public Result<PageResult<MerchantListDTO>> getMerchantList(
             @RequestParam(required = false) String keyword,
@@ -43,76 +46,50 @@ public class MerchantController {
         return Result.success(PageResult.of(pageResult));
     }
 
-    /**
-     * 获取商家详情
-     */
     @GetMapping("/merchants/{id}")
     public Result<MerchantProfileDTO> getMerchantDetail(@PathVariable Long id) {
-        MerchantProfileDTO detail = merchantService.getMerchantDetail(id);
-        return Result.success(detail);
+        return Result.success(merchantService.getMerchantDetail(id));
     }
 
-    /**
-     * 获取商品详情
-     */
     @GetMapping("/products/{id}")
     public Result<ProductDTO> getProductDetail(@PathVariable Long id) {
-        ProductDTO detail = merchantService.getProductDetail(id);
-        return Result.success(detail);
+        return Result.success(merchantService.getProductDetail(id));
     }
 
-    /**
-     * 获取所有商品分类
-     */
     @GetMapping("/categories")
     public Result<List<Category>> getAllCategories() {
-        List<Category> categories = merchantService.getAllCategories();
-        return Result.success(categories);
+        return Result.success(merchantService.getAllCategories());
     }
 
-    // ==================== 商家端接口（需商家登录） ====================
-
-    /**
-     * 获取商家自己的信息
-     */
     @GetMapping("/merchant/profile")
     public Result<Merchant> getMyProfile(HttpServletRequest request) {
         Long merchantId = (Long) request.getAttribute("merchantId");
         if (merchantId == null) {
             return Result.unauthorized("请先登录商家账号");
         }
-        Merchant merchant = merchantService.getMerchantBasicInfo(merchantId);
-        return Result.success(merchant);
+        return Result.success(merchantService.getMerchantBasicInfo(merchantId));
     }
 
-    /**
-     * 更新商家信息
-     */
     @PutMapping("/merchant/profile")
     public Result<Merchant> updateProfile(HttpServletRequest request, @RequestBody Merchant merchant) {
         Long merchantId = (Long) request.getAttribute("merchantId");
         if (merchantId == null) {
             return Result.unauthorized("请先登录商家账号");
         }
+        merchant.setUsername(null);
+        merchant.setPassword(null);
         return Result.success(merchantService.updateMerchantProfile(merchantId, merchant));
     }
 
-    /**
-     * 获取商家自己的商品列表
-     */
     @GetMapping("/merchant/products")
     public Result<List<Product>> getMyProducts(HttpServletRequest request) {
         Long merchantId = (Long) request.getAttribute("merchantId");
         if (merchantId == null) {
             return Result.unauthorized("请先登录商家账号");
         }
-        List<Product> products = merchantService.getMerchantProducts(merchantId);
-        return Result.success(products);
+        return Result.success(merchantService.getMerchantProducts(merchantId));
     }
 
-    /**
-     * 添加商品
-     */
     @PostMapping("/merchant/products")
     public Result<Product> addProduct(HttpServletRequest request, @RequestBody Product product) {
         Long merchantId = (Long) request.getAttribute("merchantId");
@@ -122,9 +99,6 @@ public class MerchantController {
         return Result.success(merchantService.addProduct(merchantId, product));
     }
 
-    /**
-     * 更新商品
-     */
     @PutMapping("/merchant/products")
     public Result<Product> updateProduct(HttpServletRequest request, @RequestBody Product product) {
         Long merchantId = (Long) request.getAttribute("merchantId");
@@ -134,9 +108,6 @@ public class MerchantController {
         return Result.success(merchantService.updateProduct(merchantId, product));
     }
 
-    /**
-     * 删除商品
-     */
     @DeleteMapping("/merchant/products/{productId}")
     public Result<Void> deleteProduct(HttpServletRequest request, @PathVariable Long productId) {
         Long merchantId = (Long) request.getAttribute("merchantId");
@@ -147,9 +118,6 @@ public class MerchantController {
         return Result.success();
     }
 
-    /**
-     * 添加规格分组
-     */
     @PostMapping("/merchant/spec-groups")
     public Result<Void> addSpecGroup(HttpServletRequest request, @RequestBody SpecGroup specGroup) {
         Long merchantId = (Long) request.getAttribute("merchantId");
@@ -160,9 +128,6 @@ public class MerchantController {
         return Result.success();
     }
 
-    /**
-     * 删除规格分组
-     */
     @DeleteMapping("/merchant/spec-groups/{groupId}")
     public Result<Void> deleteSpecGroup(HttpServletRequest request, @PathVariable Long groupId) {
         Long merchantId = (Long) request.getAttribute("merchantId");
@@ -173,9 +138,6 @@ public class MerchantController {
         return Result.success();
     }
 
-    /**
-     * 添加规格值
-     */
     @PostMapping("/merchant/product-specs")
     public Result<Void> addProductSpec(HttpServletRequest request, @RequestBody ProductSpec productSpec) {
         Long merchantId = (Long) request.getAttribute("merchantId");
@@ -186,9 +148,6 @@ public class MerchantController {
         return Result.success();
     }
 
-    /**
-     * 删除规格值
-     */
     @DeleteMapping("/merchant/product-specs/{specId}")
     public Result<Void> deleteProductSpec(HttpServletRequest request, @PathVariable Long specId) {
         Long merchantId = (Long) request.getAttribute("merchantId");

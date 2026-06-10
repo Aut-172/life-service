@@ -5,11 +5,17 @@ import cn.hutool.core.util.IdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.demo.auth.entity.Merchant;
 import com.example.demo.auth.entity.Rider;
-import com.example.demo.auth.entity.User;
 import com.example.demo.auth.mapper.MerchantMapper;
 import com.example.demo.auth.mapper.RiderMapper;
 import com.example.demo.common.BusinessException;
-import com.example.demo.order.dto.*;
+import com.example.demo.coupon.service.CouponService;
+import com.example.demo.merchant.entity.Product;
+import com.example.demo.merchant.entity.ProductSpec;
+import com.example.demo.merchant.mapper.ProductMapper;
+import com.example.demo.merchant.mapper.ProductSpecMapper;
+import com.example.demo.order.dto.CheckoutRequest;
+import com.example.demo.order.dto.MerchantOrderUpdateRequest;
+import com.example.demo.order.dto.OrderVO;
 import com.example.demo.order.entity.GroupCoupon;
 import com.example.demo.order.entity.OrderItem;
 import com.example.demo.order.entity.Orders;
@@ -25,27 +31,19 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
 import java.util.stream.Collectors;
 
 /**
- * 订单服务
- * 处理结算、支付、取消、完成、订单列表、商家订单管理
+ * Order creation, payment-state transition and order query service.
  */
 @Service
 @RequiredArgsConstructor
 public class OrderService {
-
-    private final OrdersMapper ordersMapper;
-    private final OrderItemMapper orderItemMapper;
-    private final GroupCouponMapper groupCouponMapper;
-    private final MerchantMapper merchantMapper;
-    private final RiderMapper riderMapper;
-    private final CartMapper cartMapper;
-
-    private final Snowflake snowflake = IdUtil.getSnowflake(1, 1);
-
-    // ==================== 订单状态常量 ====================
 
     public static final String STATUS_PENDING_PAYMENT = "pending_payment";
     public static final String STATUS_PENDING_ACCEPT = "pending_accept";
@@ -54,11 +52,18 @@ public class OrderService {
     public static final String STATUS_CANCELLED = "cancelled";
     public static final String STATUS_PENDING_USE = "pending_use";
 
-    // ==================== 用户端 API ====================
+    private final OrdersMapper ordersMapper;
+    private final OrderItemMapper orderItemMapper;
+    private final GroupCouponMapper groupCouponMapper;
+    private final MerchantMapper merchantMapper;
+    private final RiderMapper riderMapper;
+    private final CartMapper cartMapper;
+    private final CouponService couponService;
+    private final ProductMapper productMapper;
+    private final ProductSpecMapper productSpecMapper;
 
-    /**
-     * 获取用户订单列表
-     */
+    private final Snowflake snowflake = IdUtil.getSnowflake(1, 1);
+
     public List<OrderVO> getUserOrders(Long userId) {
         List<Orders> orders = ordersMapper.selectList(
                 new LambdaQueryWrapper<Orders>()
@@ -68,9 +73,6 @@ public class OrderService {
         return orders.stream().map(this::toOrderVO).collect(Collectors.toList());
     }
 
-    /**
-     * 获取订单详情
-     */
     public OrderVO getOrderDetail(Long userId, Long orderId) {
         Orders order = ordersMapper.selectOne(
                 new LambdaQueryWrapper<Orders>()
@@ -83,55 +85,112 @@ public class OrderService {
         return toOrderVO(order);
     }
 
-    /**
-     * 结算下单
-     */
     @Transactional
     public OrderVO checkout(Long userId, CheckoutRequest request) {
-        // 校验商家
-        Merchant merchant = merchantMapper.selectById(request.getMerchantId());
-        if (merchant == null) {
-            throw BusinessException.notFound("商家不存在");
+        if (request.getMerchantId() == null) {
+            throw BusinessException.badRequest("请选择商家");
+        }
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw BusinessException.badRequest("订单商品不能为空");
+        }
+        if (request.getAddress() == null || request.getAddress().isBlank()) {
+            throw BusinessException.badRequest("收货地址不能为空");
         }
 
-        // 生成订单号
-        String orderNo = generateOrderNo();
+        Merchant merchant = merchantMapper.selectById(request.getMerchantId());
+        if (merchant == null || !"active".equals(merchant.getStatus())) {
+            throw BusinessException.notFound("商家不存在或不可下单");
+        }
 
-        // 创建订单
+        List<ResolvedOrderItem> resolvedItems = new ArrayList<>();
+        BigDecimal goodsAmount = BigDecimal.ZERO;
+
+        for (CheckoutRequest.CheckoutItem item : request.getItems()) {
+            if (item.getProductId() == null || item.getQuantity() == null || item.getQuantity() <= 0) {
+                throw BusinessException.badRequest("商品信息不合法");
+            }
+
+            Product product = productMapper.selectById(item.getProductId());
+            if (product == null || !"active".equals(product.getStatus())) {
+                throw BusinessException.badRequest("商品不存在或已下架");
+            }
+            if (!request.getMerchantId().equals(product.getMerchantId())) {
+                throw BusinessException.badRequest("订单中包含不属于当前商家的商品");
+            }
+            if (product.getStock() != null && product.getStock() < item.getQuantity()) {
+                throw BusinessException.badRequest("商品库存不足: " + product.getName());
+            }
+
+            BigDecimal unitPrice = product.getPrice();
+            String specLabel = item.getSpecLabel();
+            if (specLabel != null && !specLabel.isBlank()) {
+                ProductSpec spec = productSpecMapper.selectOne(
+                        new LambdaQueryWrapper<ProductSpec>()
+                                .eq(ProductSpec::getProductId, product.getId())
+                                .eq(ProductSpec::getLabel, specLabel.trim())
+                                .last("limit 1")
+                );
+                if (spec == null) {
+                    throw BusinessException.badRequest("商品规格不存在: " + specLabel);
+                }
+                if (spec.getStock() != null && spec.getStock() < item.getQuantity()) {
+                    throw BusinessException.badRequest("商品规格库存不足: " + specLabel);
+                }
+                unitPrice = unitPrice.add(spec.getPrice() != null ? spec.getPrice() : BigDecimal.ZERO);
+                specLabel = spec.getLabel();
+            }
+
+            BigDecimal subtotal = unitPrice.multiply(BigDecimal.valueOf(item.getQuantity()));
+            goodsAmount = goodsAmount.add(subtotal);
+            resolvedItems.add(new ResolvedOrderItem(product, item.getQuantity(), unitPrice, subtotal, specLabel));
+        }
+
+        BigDecimal minOrderAmount = merchant.getMinDeliveryFee() != null ? merchant.getMinDeliveryFee() : BigDecimal.ZERO;
+        if (goodsAmount.compareTo(minOrderAmount) < 0) {
+            throw BusinessException.badRequest("未达到商家起送金额");
+        }
+
+        BigDecimal deliveryFee = merchant.getDeliveryFee() != null ? merchant.getDeliveryFee() : BigDecimal.ZERO;
+        BigDecimal totalAmount = goodsAmount.add(deliveryFee);
+
         Orders order = new Orders();
-        order.setOrderNo(orderNo);
+        order.setOrderNo(generateOrderNo());
         order.setUserId(userId);
         order.setMerchantId(request.getMerchantId());
         order.setType("delivery");
-        order.setTotalAmount(request.getTotal());
-        order.setActualAmount(request.getTotal().subtract(
-                request.getDiscount() != null ? request.getDiscount() : BigDecimal.ZERO));
-        order.setDeliveryFee(request.getDeliveryFee() != null ? request.getDeliveryFee() : BigDecimal.ZERO);
-        order.setDiscount(request.getDiscount() != null ? request.getDiscount() : BigDecimal.ZERO);
+        order.setTotalAmount(totalAmount);
+        order.setActualAmount(totalAmount);
+        order.setDeliveryFee(deliveryFee);
+        order.setDiscount(BigDecimal.ZERO);
         order.setStatus(STATUS_PENDING_PAYMENT);
-        order.setAddressDetail(request.getAddress());
-        order.setCouponId(request.getCouponId());
-
+        order.setAddressDetail(request.getAddress().trim());
         ordersMapper.insert(order);
 
-        // 创建订单明细
-        if (request.getItems() != null) {
-            for (CheckoutRequest.CheckoutItem item : request.getItems()) {
-                OrderItem orderItem = new OrderItem();
-                orderItem.setOrderId(order.getId());
-                orderItem.setProductId(item.getProductId());
-                orderItem.setName(item.getName());
-                orderItem.setPrice(item.getPrice());
-                orderItem.setQuantity(item.getQuantity());
-                orderItem.setImage(item.getImage());
-                orderItem.setSpecLabel(item.getSpecLabel());
-                orderItem.setSubtotal(item.getPrice().multiply(BigDecimal.valueOf(item.getQuantity())));
-                orderItem.setReviewed(false);
-                orderItemMapper.insert(orderItem);
-            }
+        for (ResolvedOrderItem resolvedItem : resolvedItems) {
+            OrderItem orderItem = new OrderItem();
+            orderItem.setOrderId(order.getId());
+            orderItem.setProductId(resolvedItem.product().getId());
+            orderItem.setName(resolvedItem.product().getName());
+            orderItem.setPrice(resolvedItem.unitPrice());
+            orderItem.setQuantity(resolvedItem.quantity());
+            orderItem.setImage(resolvedItem.product().getImage());
+            orderItem.setSpecLabel(resolvedItem.specLabel());
+            orderItem.setSubtotal(resolvedItem.subtotal());
+            orderItem.setReviewed(false);
+            orderItemMapper.insert(orderItem);
         }
 
-        // 清空该商家的购物车
+        if (request.getCouponId() != null) {
+            BigDecimal discount = couponService.lockCouponForOrder(userId, request.getCouponId(), order.getId(), totalAmount);
+            if (discount.compareTo(totalAmount) > 0) {
+                discount = totalAmount;
+            }
+            order.setCouponId(request.getCouponId());
+            order.setDiscount(discount);
+            order.setActualAmount(totalAmount.subtract(discount));
+            ordersMapper.updateById(order);
+        }
+
         cartMapper.delete(
                 new LambdaQueryWrapper<Cart>()
                         .eq(Cart::getUserId, userId)
@@ -141,9 +200,6 @@ public class OrderService {
         return toOrderVO(order);
     }
 
-    /**
-     * 取消订单
-     */
     @Transactional
     public OrderVO cancelOrder(Long userId, Long orderId) {
         Orders order = ordersMapper.selectOne(
@@ -154,20 +210,18 @@ public class OrderService {
         if (order == null) {
             throw BusinessException.notFound("订单不存在");
         }
-        // 只有待支付和待接单状态可以取消
-        if (!STATUS_PENDING_PAYMENT.equals(order.getStatus())
-                && !STATUS_PENDING_ACCEPT.equals(order.getStatus())) {
+        if (!STATUS_PENDING_PAYMENT.equals(order.getStatus()) && !STATUS_PENDING_ACCEPT.equals(order.getStatus())) {
             throw BusinessException.badRequest("当前订单状态不允许取消");
         }
 
         order.setStatus(STATUS_CANCELLED);
         ordersMapper.updateById(order);
+        if (order.getCouponId() != null) {
+            couponService.releaseCoupon(order.getId());
+        }
         return toOrderVO(order);
     }
 
-    /**
-     * 确认收货
-     */
     @Transactional
     public OrderVO completeOrder(Long userId, Long orderId) {
         Orders order = ordersMapper.selectOne(
@@ -178,22 +232,19 @@ public class OrderService {
         if (order == null) {
             throw BusinessException.notFound("订单不存在");
         }
-        if (!STATUS_DELIVERING.equals(order.getStatus())
-                && !STATUS_PENDING_ACCEPT.equals(order.getStatus())) {
+        if (!STATUS_DELIVERING.equals(order.getStatus())) {
             throw BusinessException.badRequest("当前订单状态不允许确认收货");
         }
 
         order.setStatus(STATUS_COMPLETED);
         order.setCompletedAt(LocalDateTime.now());
         ordersMapper.updateById(order);
+        if (order.getCouponId() != null) {
+            couponService.confirmUseCoupon(order.getId());
+        }
         return toOrderVO(order);
     }
 
-    // ==================== 商家端 API ====================
-
-    /**
-     * 获取商家订单列表
-     */
     public List<OrderVO> getMerchantOrders(Long merchantId) {
         List<Orders> orders = ordersMapper.selectList(
                 new LambdaQueryWrapper<Orders>()
@@ -203,9 +254,6 @@ public class OrderService {
         return orders.stream().map(this::toOrderVO).collect(Collectors.toList());
     }
 
-    /**
-     * 商家更新订单状态
-     */
     @Transactional
     public OrderVO updateMerchantOrder(Long merchantId, Long orderId, MerchantOrderUpdateRequest request) {
         Orders order = ordersMapper.selectOne(
@@ -219,20 +267,13 @@ public class OrderService {
 
         String newStatus = request.getStatus();
         String currentStatus = order.getStatus();
-
-        // 校验状态流转合法性
         boolean validTransition = false;
-        if (STATUS_PENDING_ACCEPT.equals(currentStatus) && "pending_accept".equals(newStatus)) {
-            // 商家接单（状态不变，只是确认）
-            validTransition = true;
-        } else if (STATUS_PENDING_ACCEPT.equals(currentStatus) && STATUS_DELIVERING.equals(newStatus)) {
-            // 待接单 → 配送中
+
+        if (STATUS_PENDING_ACCEPT.equals(currentStatus) && STATUS_DELIVERING.equals(newStatus)) {
             validTransition = true;
         } else if (STATUS_DELIVERING.equals(currentStatus) && STATUS_COMPLETED.equals(newStatus)) {
-            // 配送中 → 已完成
             validTransition = true;
         } else if (STATUS_PENDING_ACCEPT.equals(currentStatus) && STATUS_COMPLETED.equals(newStatus)) {
-            // 待接单 → 已完成（到店团购核销场景）
             validTransition = true;
         }
 
@@ -243,25 +284,20 @@ public class OrderService {
         order.setStatus(newStatus);
         if (STATUS_COMPLETED.equals(newStatus)) {
             order.setCompletedAt(LocalDateTime.now());
+            if (order.getCouponId() != null) {
+                couponService.confirmUseCoupon(order.getId());
+            }
         }
         ordersMapper.updateById(order);
         return toOrderVO(order);
     }
 
-    // ==================== 私有方法 ====================
-
-    /**
-     * 生成订单编号
-     */
     private String generateOrderNo() {
         String datePart = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         long id = snowflake.nextId();
         return "ORD" + datePart + String.format("%010d", id % 10000000000L);
     }
 
-    /**
-     * 生成团购券
-     */
     private void generateGroupCoupons(Orders order) {
         List<OrderItem> items = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>()
@@ -280,19 +316,11 @@ public class OrderService {
         }
     }
 
-    /**
-     * 生成6位核销码
-     */
     private String generateCouponCode() {
-        Random random = new Random();
-        return String.format("%06d", random.nextInt(1000000));
+        return String.format("%06d", new Random().nextInt(1000000));
     }
 
-    /**
-     * 订单实体转 VO
-     */
     private OrderVO toOrderVO(Orders order) {
-        // 查询商家信息
         String merchantName = "";
         String merchantAvatar = "";
         if (order.getMerchantId() != null) {
@@ -303,7 +331,6 @@ public class OrderService {
             }
         }
 
-        // 查询骑手信息
         String riderName = null;
         String riderPhone = null;
         if (order.getRiderId() != null) {
@@ -314,35 +341,27 @@ public class OrderService {
             }
         }
 
-        // 查询订单明细
         List<OrderItem> items = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>()
                         .eq(OrderItem::getOrderId, order.getId())
         );
 
-        List<OrderVO.OrderItemVO> itemVOs = items.stream().map(item ->
-                OrderVO.OrderItemVO.builder()
+        List<OrderVO.OrderItemVO> itemVOs = items.stream()
+                .map(item -> OrderVO.OrderItemVO.builder()
                         .productId(item.getProductId())
                         .name(item.getName())
                         .price(item.getPrice())
                         .quantity(item.getQuantity())
                         .image(item.getImage())
                         .specLabel(item.getSpecLabel())
-                        .reviewed(item.getReviewed() != null && item.getReviewed())
-                        .build()
-        ).collect(Collectors.toList());
-
-        // 已评价的商品ID列表
-        List<String> reviewedProductIds = items.stream()
-                .filter(i -> i.getReviewed() != null && i.getReviewed())
-                .map(i -> String.valueOf(i.getProductId()))
+                        .reviewed(Boolean.TRUE.equals(item.getReviewed()))
+                        .build())
                 .collect(Collectors.toList());
 
-        // 构建时间线
-        List<OrderVO.TimelineItem> timeline = buildTimeline(order);
-
-        // 状态中文映射
-        String statusText = mapStatus(order.getStatus());
+        List<String> reviewedProductIds = items.stream()
+                .filter(i -> Boolean.TRUE.equals(i.getReviewed()))
+                .map(i -> String.valueOf(i.getProductId()))
+                .collect(Collectors.toList());
 
         return OrderVO.builder()
                 .id(order.getId())
@@ -350,7 +369,7 @@ public class OrderService {
                 .merchantId(order.getMerchantId())
                 .merchant(merchantName)
                 .merchantAvatar(merchantAvatar)
-                .status(statusText)
+                .status(mapStatus(order.getStatus()))
                 .total(order.getActualAmount())
                 .deliveryFee(order.getDeliveryFee())
                 .discount(order.getDiscount())
@@ -363,53 +382,43 @@ public class OrderService {
                 .address(order.getAddressDetail())
                 .items(itemVOs)
                 .reviewedProductIds(reviewedProductIds)
-                .timeline(timeline)
+                .timeline(buildTimeline(order))
                 .build();
     }
 
-    /**
-     * 构建订单时间线
-     */
     private List<OrderVO.TimelineItem> buildTimeline(Orders order) {
         List<OrderVO.TimelineItem> timeline = new ArrayList<>();
-        String dateFormat = "MM-dd HH:mm";
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM-dd HH:mm");
 
-        // 已下单
         timeline.add(OrderVO.TimelineItem.builder()
                 .label("已下单")
-                .time(order.getCreateTime().format(DateTimeFormatter.ofPattern(dateFormat)))
+                .time(order.getCreateTime().format(formatter))
                 .build());
 
-        // 已支付
         if (order.getPaidAt() != null) {
             timeline.add(OrderVO.TimelineItem.builder()
                     .label("已支付")
-                    .time(order.getPaidAt().format(DateTimeFormatter.ofPattern(dateFormat)))
+                    .time(order.getPaidAt().format(formatter))
                     .build());
         }
 
-        // 已完成
         if (order.getCompletedAt() != null) {
             timeline.add(OrderVO.TimelineItem.builder()
                     .label("已完成")
-                    .time(order.getCompletedAt().format(DateTimeFormatter.ofPattern(dateFormat)))
+                    .time(order.getCompletedAt().format(formatter))
                     .build());
         }
 
-        // 已取消
         if (STATUS_CANCELLED.equals(order.getStatus())) {
             timeline.add(OrderVO.TimelineItem.builder()
                     .label("已取消")
-                    .time(LocalDateTime.now().format(DateTimeFormatter.ofPattern(dateFormat)))
+                    .time(LocalDateTime.now().format(formatter))
                     .build());
         }
 
         return timeline;
     }
 
-    /**
-     * 状态码转中文
-     */
     private String mapStatus(String status) {
         Map<String, String> map = new HashMap<>();
         map.put(STATUS_PENDING_PAYMENT, "待支付");
@@ -419,5 +428,12 @@ public class OrderService {
         map.put(STATUS_CANCELLED, "已取消");
         map.put(STATUS_PENDING_USE, "待使用");
         return map.getOrDefault(status, status);
+    }
+
+    private record ResolvedOrderItem(Product product,
+                                     Integer quantity,
+                                     BigDecimal unitPrice,
+                                     BigDecimal subtotal,
+                                     String specLabel) {
     }
 }

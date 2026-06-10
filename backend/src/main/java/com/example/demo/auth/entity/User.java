@@ -1,6 +1,7 @@
 package com.example.demo.auth.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.example.demo.common.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -14,6 +15,7 @@ import lombok.EqualsAndHashCode;
 public class User extends BaseEntity {
 
     private String username;
+    @JsonIgnore
     private String password;
     private String phone;
     private String nickname;
