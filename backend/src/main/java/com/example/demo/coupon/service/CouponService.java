@@ -1,6 +1,7 @@
 package com.example.demo.coupon.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.example.demo.common.BusinessException;
 import com.example.demo.coupon.dto.CouponVO;
 import com.example.demo.coupon.entity.Coupon;
@@ -40,7 +41,7 @@ public class CouponService {
                         return null;
                     }
                     return CouponVO.builder()
-                            .id(uc.getId())
+                            .id(coupon.getId())
                             .title(coupon.getName())
                             .description(buildCouponDescription(coupon))
                             .threshold(coupon.getThreshold())
@@ -83,7 +84,9 @@ public class CouponService {
 
         validateCouponTemplate(coupon);
 
-        if (coupon.getClaimedCount() >= coupon.getTotalCount()) {
+        int claimedCount = coupon.getClaimedCount() != null ? coupon.getClaimedCount() : 0;
+        int totalCount = coupon.getTotalCount() != null ? coupon.getTotalCount() : 0;
+        if (totalCount <= 0 || claimedCount >= totalCount) {
             throw BusinessException.badRequest("该优惠券已被领完");
         }
 
@@ -92,7 +95,11 @@ public class CouponService {
                         .eq(UserCoupon::getUserId, userId)
                         .eq(UserCoupon::getCouponId, couponId)
         );
-        if (userClaimed >= coupon.getLimitPerUser()) {
+        int limitPerUser = coupon.getLimitPerUser() != null ? coupon.getLimitPerUser() : 1;
+        if (limitPerUser <= 0) {
+            throw BusinessException.badRequest("该优惠券当前不可领取");
+        }
+        if (userClaimed >= limitPerUser) {
             throw BusinessException.badRequest("已达到领取上限");
         }
 
@@ -103,11 +110,11 @@ public class CouponService {
         userCoupon.setClaimedAt(LocalDateTime.now());
         userCouponMapper.insert(userCoupon);
 
-        coupon.setClaimedCount(coupon.getClaimedCount() + 1);
+        coupon.setClaimedCount(claimedCount + 1);
         couponMapper.updateById(coupon);
 
         return CouponVO.builder()
-                .id(userCoupon.getId())
+                .id(coupon.getId())
                 .title(coupon.getName())
                 .description(buildCouponDescription(coupon))
                 .threshold(coupon.getThreshold())
@@ -140,14 +147,15 @@ public class CouponService {
         }
 
         validateCouponTemplate(coupon);
-        if (orderAmount.compareTo(coupon.getThreshold()) < 0) {
+        BigDecimal threshold = coupon.getThreshold() != null ? coupon.getThreshold() : BigDecimal.ZERO;
+        if (orderAmount.compareTo(threshold) < 0) {
             throw BusinessException.badRequest("未满足优惠券使用门槛");
         }
 
         userCoupon.setStatus("locked");
         userCoupon.setOrderId(orderId);
         userCouponMapper.updateById(userCoupon);
-        return coupon.getDiscount();
+        return coupon.getDiscount() != null ? coupon.getDiscount() : BigDecimal.ZERO;
     }
 
     @Transactional
@@ -170,24 +178,32 @@ public class CouponService {
                         .eq(UserCoupon::getOrderId, orderId)
         );
         if (userCoupon != null && "locked".equals(userCoupon.getStatus())) {
-            userCoupon.setStatus("unused");
-            userCoupon.setOrderId(null);
-            userCouponMapper.updateById(userCoupon);
+            userCouponMapper.update(
+                    null,
+                    new LambdaUpdateWrapper<UserCoupon>()
+                            .eq(UserCoupon::getId, userCoupon.getId())
+                            .set(UserCoupon::getStatus, "unused")
+                            .set(UserCoupon::getOrderId, null)
+                            .set(UserCoupon::getUsedAt, null)
+            );
         }
     }
 
     private void validateCouponTemplate(Coupon coupon) {
         LocalDateTime now = LocalDateTime.now();
         if (!"released".equals(coupon.getStatus())) {
-            throw BusinessException.badRequest("该优惠券未发布");
+            throw BusinessException.badRequest("该优惠券尚未发布");
         }
-        if (now.isBefore(coupon.getStartTime()) || now.isAfter(coupon.getEndTime())) {
+        if (coupon.getStartTime() == null || coupon.getEndTime() == null
+                || now.isBefore(coupon.getStartTime()) || now.isAfter(coupon.getEndTime())) {
             throw BusinessException.badRequest("该优惠券不在有效期内");
         }
     }
 
     private String buildCouponDescription(Coupon coupon) {
-        return "满" + coupon.getThreshold().stripTrailingZeros().toPlainString()
-                + "减" + coupon.getDiscount().stripTrailingZeros().toPlainString();
+        BigDecimal threshold = coupon.getThreshold() != null ? coupon.getThreshold() : BigDecimal.ZERO;
+        BigDecimal discount = coupon.getDiscount() != null ? coupon.getDiscount() : BigDecimal.ZERO;
+        return "满" + threshold.stripTrailingZeros().toPlainString()
+                + "减" + discount.stripTrailingZeros().toPlainString();
     }
 }

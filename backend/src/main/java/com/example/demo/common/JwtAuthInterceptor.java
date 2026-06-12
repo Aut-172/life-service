@@ -67,6 +67,7 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
                 || requestUri.startsWith("/api/orders/")
                 || requestUri.equals("/api/coupons")
                 || requestUri.startsWith("/api/coupons/")
+                || requestUri.startsWith("/api/delivery/")
                 || requestUri.startsWith("/api/payments/")) {
             if (!"consumer".equals(role)) {
                 throw BusinessException.forbidden("无权访问用户接口");

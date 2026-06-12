@@ -4,6 +4,7 @@ import com.example.demo.auth.entity.Merchant;
 import com.example.demo.auth.entity.Rider;
 import com.example.demo.auth.mapper.MerchantMapper;
 import com.example.demo.auth.mapper.RiderMapper;
+import com.example.demo.common.BusinessException;
 import com.example.demo.delivery.dto.DeliveryVO;
 import com.example.demo.order.entity.Orders;
 import com.example.demo.order.mapper.OrdersMapper;
@@ -15,7 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 配送追踪服务
+ * Delivery tracking service.
  */
 @Service
 public class DeliveryService {
@@ -31,18 +32,17 @@ public class DeliveryService {
     }
 
     /**
-     * 获取配送追踪信息
-     *
-     * @param orderId 订单ID
-     * @return 配送追踪信息
+     * Only the order owner can view delivery info.
      */
-    public DeliveryVO getDeliveryInfo(Long orderId) {
+    public DeliveryVO getDeliveryInfo(Long userId, Long orderId) {
         Orders order = ordersMapper.selectById(orderId);
         if (order == null) {
             return null;
         }
+        if (userId == null || !userId.equals(order.getUserId())) {
+            throw BusinessException.forbidden("无权查看该订单配送信息");
+        }
 
-        // 获取骑手信息
         String riderName = null;
         String riderPhone = null;
         if (order.getRiderId() != null) {
@@ -53,16 +53,9 @@ public class DeliveryService {
             }
         }
 
-        // 获取商家信息（用于ETA估算）
         Merchant merchant = merchantMapper.selectById(order.getMerchantId());
-
-        // 构建时间线
         List<DeliveryVO.TimelineItem> timeline = buildTimeline(order);
-
-        // 状态映射
         String displayStatus = mapStatus(order.getStatus());
-
-        // ETA 估算
         String eta = estimateEta(order, merchant);
 
         return DeliveryVO.builder()
@@ -75,14 +68,10 @@ public class DeliveryService {
                 .build();
     }
 
-    /**
-     * 构建订单时间线
-     */
     private List<DeliveryVO.TimelineItem> buildTimeline(Orders order) {
         List<DeliveryVO.TimelineItem> timeline = new ArrayList<>();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-        // 已下单
         if (order.getCreateTime() != null) {
             timeline.add(DeliveryVO.TimelineItem.builder()
                     .label("已下单")
@@ -90,7 +79,6 @@ public class DeliveryService {
                     .build());
         }
 
-        // 已支付
         if (order.getPaidAt() != null) {
             timeline.add(DeliveryVO.TimelineItem.builder()
                     .label("已支付")
@@ -98,7 +86,6 @@ public class DeliveryService {
                     .build());
         }
 
-        // 配送中（如果有骑手接单时间，这里简化处理）
         if ("delivering".equals(order.getStatus()) && order.getRiderId() != null) {
             timeline.add(DeliveryVO.TimelineItem.builder()
                     .label("配送中")
@@ -106,7 +93,6 @@ public class DeliveryService {
                     .build());
         }
 
-        // 已完成
         if ("completed".equals(order.getStatus()) && order.getCompletedAt() != null) {
             timeline.add(DeliveryVO.TimelineItem.builder()
                     .label("已完成")
@@ -117,20 +103,17 @@ public class DeliveryService {
         return timeline;
     }
 
-    /**
-     * 估算预计送达时间
-     */
     private String estimateEta(Orders order, Merchant merchant) {
         if ("completed".equals(order.getStatus()) || "cancelled".equals(order.getStatus())) {
             return null;
         }
 
         if ("delivering".equals(order.getStatus())) {
-            return "约15-30分钟";
+            return "约25-30分钟";
         }
 
         if ("pending_accept".equals(order.getStatus())) {
-            return "等待商家接单";
+            return merchant != null ? "商家接单中" : "等待接单";
         }
 
         if ("pending_payment".equals(order.getStatus())) {
@@ -140,26 +123,18 @@ public class DeliveryService {
         return null;
     }
 
-    /**
-     * 状态映射
-     */
     private String mapStatus(String status) {
-        if (status == null) return "未知";
-        switch (status) {
-            case "pending_payment":
-                return "待支付";
-            case "pending_accept":
-                return "待取餐";
-            case "delivering":
-                return "配送中";
-            case "completed":
-                return "已完成";
-            case "cancelled":
-                return "已取消";
-            case "pending_use":
-                return "待使用";
-            default:
-                return status;
+        if (status == null) {
+            return "未知";
         }
+        return switch (status) {
+            case "pending_payment" -> "待支付";
+            case "pending_accept" -> "待取餐";
+            case "delivering" -> "配送中";
+            case "completed" -> "已完成";
+            case "cancelled" -> "已取消";
+            case "pending_use" -> "待使用";
+            default -> status;
+        };
     }
 }

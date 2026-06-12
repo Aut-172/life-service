@@ -1,5 +1,7 @@
 package com.example.demo.payment.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -17,7 +19,9 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class PaymentVO {
 
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long orderId;
     private BigDecimal amount;
     private String payMethod;

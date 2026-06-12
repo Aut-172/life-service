@@ -1,5 +1,7 @@
 package com.example.demo.delivery.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,6 +18,7 @@ import java.util.List;
 @AllArgsConstructor
 public class DeliveryVO {
 
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long orderId;
     private String status;
     private String riderName;

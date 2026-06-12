@@ -6,6 +6,7 @@ import com.example.demo.auth.entity.Rider;
 import com.example.demo.auth.mapper.MerchantMapper;
 import com.example.demo.auth.mapper.RiderMapper;
 import com.example.demo.common.BusinessException;
+import com.example.demo.coupon.service.CouponService;
 import com.example.demo.order.entity.OrderItem;
 import com.example.demo.order.entity.Orders;
 import com.example.demo.order.mapper.OrderItemMapper;
@@ -22,7 +23,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 骑手服务
+ * Rider service.
  */
 @Service
 @RequiredArgsConstructor
@@ -32,6 +33,7 @@ public class RiderService {
     private final OrderItemMapper orderItemMapper;
     private final MerchantMapper merchantMapper;
     private final RiderMapper riderMapper;
+    private final CouponService couponService;
 
     public Rider updateProfile(Long riderId, RiderProfileUpdateRequest request) {
         Rider rider = riderMapper.selectById(riderId);
@@ -62,11 +64,7 @@ public class RiderService {
         return riderMapper.selectById(riderId);
     }
 
-    /**
-     * 获取骑手任务列表
-     */
     public RiderTaskVO getTasks(Long riderId) {
-        // 待抢单：pending_accept 状态且没有 riderId 的订单
         List<Orders> availableOrders = ordersMapper.selectList(
                 new LambdaQueryWrapper<Orders>()
                         .eq(Orders::getStatus, "pending_accept")
@@ -74,7 +72,6 @@ public class RiderService {
                         .orderByDesc(Orders::getCreateTime)
         );
 
-        // 进行中：分配给该骑手且状态为 delivering
         List<Orders> assignedOrders = ordersMapper.selectList(
                 new LambdaQueryWrapper<Orders>()
                         .eq(Orders::getRiderId, riderId)
@@ -82,7 +79,6 @@ public class RiderService {
                         .orderByDesc(Orders::getCreateTime)
         );
 
-        // 已完成：分配给该骑手且状态为 completed
         List<Orders> completedOrders = ordersMapper.selectList(
                 new LambdaQueryWrapper<Orders>()
                         .eq(Orders::getRiderId, riderId)
@@ -90,11 +86,10 @@ public class RiderService {
                         .orderByDesc(Orders::getCreateTime)
         );
 
-        // 统计数据
         RiderTaskVO.RiderStats stats = RiderTaskVO.RiderStats.builder()
-                .totalEarnings(completedOrders.size() * 5.0) // 模拟每单5元配送费
+                .totalEarnings(completedOrders.size() * 5.0)
                 .completedOrders(completedOrders.size())
-                .totalDistance(completedOrders.size() * 2.0 + "km") // 模拟每单2km
+                .totalDistance(completedOrders.size() * 2.0 + "km")
                 .build();
 
         return RiderTaskVO.builder()
@@ -105,9 +100,6 @@ public class RiderService {
                 .build();
     }
 
-    /**
-     * 更新骑手任务（接单/已取餐/送达完成）
-     */
     @Transactional
     public RiderTaskVO.TaskItem updateTask(Long riderId, Long orderId, RiderTaskUpdateRequest request) {
         Orders order = ordersMapper.selectById(orderId);
@@ -115,12 +107,11 @@ public class RiderService {
             throw BusinessException.notFound("订单不存在");
         }
 
-        String newStatus = request.getStatus();
+        String newStatus = normalizeTaskStatus(request.getStatus());
         String currentStatus = order.getStatus();
 
         switch (newStatus) {
-            case "待取餐":
-                // 接单：pending_accept → delivering，设置骑手信息
+            case "pending_accept":
                 if (!"pending_accept".equals(currentStatus)) {
                     throw BusinessException.badRequest("当前订单状态不允许接单");
                 }
@@ -131,23 +122,21 @@ public class RiderService {
                 order.setStatus("delivering");
                 break;
 
-            case "配送中":
-                // 已取餐：delivering 状态不变，只是标记
+            case "delivering":
                 if (!"delivering".equals(currentStatus)) {
                     throw BusinessException.badRequest("当前订单状态不允许标记配送中");
                 }
                 if (!riderId.equals(order.getRiderId())) {
-                    throw BusinessException.badRequest("该订单不是您的配送任务");
+                    throw BusinessException.badRequest("该订单不属于当前骑手");
                 }
                 break;
 
-            case "已完成":
-                // 送达完成：delivering → completed
+            case "completed":
                 if (!"delivering".equals(currentStatus)) {
                     throw BusinessException.badRequest("当前订单状态不允许确认送达");
                 }
                 if (!riderId.equals(order.getRiderId())) {
-                    throw BusinessException.badRequest("该订单不是您的配送任务");
+                    throw BusinessException.badRequest("该订单不属于当前骑手");
                 }
                 order.setStatus("completed");
                 order.setCompletedAt(LocalDateTime.now());
@@ -158,14 +147,26 @@ public class RiderService {
         }
 
         ordersMapper.updateById(order);
+        if ("completed".equals(order.getStatus()) && order.getCouponId() != null) {
+            couponService.confirmUseCoupon(order.getId());
+        }
         return toTaskItem(order);
     }
 
-    /**
-     * 将订单转换为骑手任务项
-     */
+    private String normalizeTaskStatus(String status) {
+        if (status == null) {
+            return null;
+        }
+
+        return switch (status.trim()) {
+            case "待取餐", "待接单" -> "pending_accept";
+            case "配送中" -> "delivering";
+            case "已完成" -> "completed";
+            default -> status.trim();
+        };
+    }
+
     private RiderTaskVO.TaskItem toTaskItem(Orders order) {
-        // 查询商家信息
         String merchantName = "";
         String merchantAvatar = "";
         String merchantAddress = "";
@@ -178,30 +179,20 @@ public class RiderService {
             }
         }
 
-        // 查询订单商品摘要
         List<OrderItem> items = orderItemMapper.selectList(
                 new LambdaQueryWrapper<OrderItem>()
                         .eq(OrderItem::getOrderId, order.getId())
         );
         String itemsSummary = items.stream()
-                .map(item -> item.getName() + "×" + item.getQuantity())
+                .map(item -> item.getName() + "x" + item.getQuantity())
                 .collect(Collectors.joining("、"));
 
-        // 状态中文映射
-        String statusText;
-        switch (order.getStatus()) {
-            case "pending_accept":
-                statusText = "待取餐";
-                break;
-            case "delivering":
-                statusText = "配送中";
-                break;
-            case "completed":
-                statusText = "已完成";
-                break;
-            default:
-                statusText = order.getStatus();
-        }
+        String statusText = switch (order.getStatus()) {
+            case "pending_accept" -> "待取餐";
+            case "delivering" -> "配送中";
+            case "completed" -> "已完成";
+            default -> order.getStatus();
+        };
 
         return RiderTaskVO.TaskItem.builder()
                 .id(order.getId())

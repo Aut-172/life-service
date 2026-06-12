@@ -152,6 +152,7 @@ public class OrderService {
 
         BigDecimal deliveryFee = merchant.getDeliveryFee() != null ? merchant.getDeliveryFee() : BigDecimal.ZERO;
         BigDecimal totalAmount = goodsAmount.add(deliveryFee);
+        reserveInventory(resolvedItems);
 
         Orders order = new Orders();
         order.setOrderNo(generateOrderNo());
@@ -214,6 +215,7 @@ public class OrderService {
             throw BusinessException.badRequest("当前订单状态不允许取消");
         }
 
+        restoreInventory(orderId);
         order.setStatus(STATUS_CANCELLED);
         ordersMapper.updateById(order);
         if (order.getCouponId() != null) {
@@ -265,7 +267,7 @@ public class OrderService {
             throw BusinessException.notFound("订单不存在");
         }
 
-        String newStatus = request.getStatus();
+        String newStatus = normalizeStatusCode(request.getStatus());
         String currentStatus = order.getStatus();
         boolean validTransition = false;
 
@@ -292,10 +294,80 @@ public class OrderService {
         return toOrderVO(order);
     }
 
+    private String normalizeStatusCode(String status) {
+        if (status == null) {
+            return null;
+        }
+        return switch (status.trim()) {
+            case "待支付" -> STATUS_PENDING_PAYMENT;
+            case "待取餐", "待接单" -> STATUS_PENDING_ACCEPT;
+            case "配送中" -> STATUS_DELIVERING;
+            case "已完成" -> STATUS_COMPLETED;
+            case "已取消" -> STATUS_CANCELLED;
+            case "待使用" -> STATUS_PENDING_USE;
+            default -> status;
+        };
+    }
+
     private String generateOrderNo() {
         String datePart = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         long id = snowflake.nextId();
         return "ORD" + datePart + String.format("%010d", id % 10000000000L);
+    }
+
+    private void reserveInventory(List<ResolvedOrderItem> resolvedItems) {
+        for (ResolvedOrderItem resolvedItem : resolvedItems) {
+            Product product = resolvedItem.product();
+            if (product.getStock() != null) {
+                product.setStock(product.getStock() - resolvedItem.quantity());
+                productMapper.updateById(product);
+            }
+
+            if (resolvedItem.specLabel() == null || resolvedItem.specLabel().isBlank()) {
+                continue;
+            }
+
+            ProductSpec spec = productSpecMapper.selectOne(
+                    new LambdaQueryWrapper<ProductSpec>()
+                            .eq(ProductSpec::getProductId, product.getId())
+                            .eq(ProductSpec::getLabel, resolvedItem.specLabel())
+                            .last("limit 1")
+            );
+            if (spec != null && spec.getStock() != null) {
+                spec.setStock(spec.getStock() - resolvedItem.quantity());
+                productSpecMapper.updateById(spec);
+            }
+        }
+    }
+
+    private void restoreInventory(Long orderId) {
+        List<OrderItem> items = orderItemMapper.selectList(
+                new LambdaQueryWrapper<OrderItem>()
+                        .eq(OrderItem::getOrderId, orderId)
+        );
+
+        for (OrderItem item : items) {
+            Product product = productMapper.selectById(item.getProductId());
+            if (product != null && product.getStock() != null) {
+                product.setStock(product.getStock() + item.getQuantity());
+                productMapper.updateById(product);
+            }
+
+            if (item.getSpecLabel() == null || item.getSpecLabel().isBlank()) {
+                continue;
+            }
+
+            ProductSpec spec = productSpecMapper.selectOne(
+                    new LambdaQueryWrapper<ProductSpec>()
+                            .eq(ProductSpec::getProductId, item.getProductId())
+                            .eq(ProductSpec::getLabel, item.getSpecLabel())
+                            .last("limit 1")
+            );
+            if (spec != null && spec.getStock() != null) {
+                spec.setStock(spec.getStock() + item.getQuantity());
+                productSpecMapper.updateById(spec);
+            }
+        }
     }
 
     private void generateGroupCoupons(Orders order) {

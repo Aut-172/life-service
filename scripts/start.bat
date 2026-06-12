@@ -42,16 +42,16 @@ if not exist "%BACKEND_JAR%" (
     )
     popd
 )
-start "Backend" cmd /c "cd /d %BACKEND_DIR% && java -jar \"%BACKEND_JAR%\""
+start "Backend" cmd /c "cd /d %BACKEND_DIR% && java -jar \"%BACKEND_JAR%\" --server.port=8081"
 
 echo Waiting for backend health check...
 set WAIT_COUNT=0
 :WAIT_BACKEND
 timeout /t 2 /nobreak >nul
 set /a WAIT_COUNT+=1
-curl -s http://localhost:8080/api/health >nul 2>&1
+curl -s http://localhost:8081/api/health >nul 2>&1
 if %errorlevel% equ 0 (
-    echo [OK] Backend started on http://localhost:8080
+    echo [OK] Backend started on http://localhost:8081
     goto BACKEND_READY
 )
 if %WAIT_COUNT% lss 15 goto WAIT_BACKEND
@@ -78,7 +78,7 @@ echo ========================================
 echo     Startup finished
 echo.
 echo     Frontend: http://localhost:5173
-echo     Backend : http://localhost:8080
+echo     Backend : http://localhost:8081
 echo.
 echo     If backend fails, verify DB_URL / DB_USERNAME / DB_PASSWORD
 echo     or check backend\src\main\resources\application.yml

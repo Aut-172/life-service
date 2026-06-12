@@ -1,5 +1,7 @@
 package com.example.demo.order.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -18,8 +20,10 @@ import java.util.List;
 @AllArgsConstructor
 public class OrderVO {
 
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
     private String orderNo;
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long merchantId;
     private String merchant;
     private String merchantAvatar;
@@ -30,6 +34,7 @@ public class OrderVO {
     private String eta;
     private LocalDateTime createdAt;
     private LocalDateTime paidAt;
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long riderId;
     private String riderName;
     private String riderPhone;
@@ -43,6 +48,7 @@ public class OrderVO {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class OrderItemVO {
+        @JsonSerialize(using = ToStringSerializer.class)
         private Long productId;
         private String name;
         private BigDecimal price;
